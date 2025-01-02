@@ -1,0 +1,182 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Push Notifications Demo</title>
+		<style>
+			body {
+				padding: 20px;
+				font-family: Arial, sans-serif;
+			}
+			button {
+				padding: 10px;
+				margin: 10px 0;
+			}
+			#status {
+				margin: 10px 0;
+			}
+			#notificationPanel {
+				margin-top: 20px;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Push Notifications Testing Panel</h1>
+
+		<div id="status">Status: Not subscribed</div>
+
+		<button id="subscribe">Subscribe to Notifications</button>
+
+		<div id="notificationPanel" style="display: none">
+			<h3>Send Test Notification</h3>
+			<input
+				type="text"
+				id="notificationMessage"
+				placeholder="Enter notification message"
+				value="Test notification" />
+			<button id="sendNotification">Send Notification</button>
+		</div>
+
+		<div id="debug">
+			<h3>Debug Info:</h3>
+			<pre id="debugInfo"></pre>
+		</div>
+
+		<script>
+			let publicVapidKey = "";
+			let storedHmac = "";
+
+			async function getVapidKey() {
+				const response = await fetch("/vapid-public-key");
+				const data = await response.json();
+				return data.publicKey;
+			}
+
+			async function registerServiceWorker() {
+				try {
+					if ("serviceWorker" in navigator && "PushManager" in window) {
+						const registration = await navigator.serviceWorker.register(
+							"/service-worker.js"
+						);
+						updateStatus("Service Worker registered");
+						return registration;
+					} else {
+						throw new Error("Push notifications not supported");
+					}
+				} catch (error) {
+					updateStatus("Service Worker registration failed: " + error.message);
+					throw error;
+				}
+			}
+
+			async function subscribeToNotifications() {
+				try {
+					updateStatus("Subscribing...");
+
+					const registration = await registerServiceWorker();
+
+					await navigator.serviceWorker.ready;
+
+					publicVapidKey = await getVapidKey();
+					const subscription = await registration.pushManager.subscribe({
+						userVisibleOnly: true,
+						applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
+					});
+
+					const response = await fetch("/subscribe", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							subscription: subscription,
+							userId: "user123",
+						}),
+					});
+
+					const data = await response.json();
+					storedHmac = data.hmac;
+
+					updateStatus("Subscription successful");
+					document.getElementById("notificationPanel").style.display = "block";
+					updateDebugInfo({
+						subscription: subscription,
+						hmac: storedHmac,
+					});
+				} catch (error) {
+					updateStatus("Subscription failed: " + error.message);
+					updateDebugInfo({ error: error.message });
+				}
+			}
+
+			async function sendTestNotification() {
+				try {
+					const message = document.getElementById("notificationMessage").value;
+
+					const response = await fetch("/send-notification", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							userId: "user123",
+							message: message,
+							hmac: storedHmac,
+						}),
+					});
+
+					const data = await response.json();
+					updateStatus("Notification sent: " + data.message);
+				} catch (error) {
+					updateStatus("Failed to send notification: " + error.message);
+				}
+			}
+
+			function updateStatus(message) {
+				document.getElementById("status").textContent = "Status: " + message;
+			}
+
+			function updateDebugInfo(info) {
+				document.getElementById("debugInfo").textContent = JSON.stringify(
+					info,
+					null,
+					2
+				);
+			}
+
+			function urlBase64ToUint8Array(base64String) {
+				const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+				const base64 = (base64String + padding)
+					.replace(/\-/g, "+")
+					.replace(/_/g, "/");
+
+				const rawData = window.atob(base64);
+				const outputArray = new Uint8Array(rawData.length);
+
+				for (let i = 0; i < rawData.length; ++i) {
+					outputArray[i] = rawData.charCodeAt(i);
+				}
+				return outputArray;
+			}
+
+			document
+				.getElementById("subscribe")
+				.addEventListener("click", subscribeToNotifications);
+			document
+				.getElementById("sendNotification")
+				.addEventListener("click", sendTestNotification);
+
+			if ("serviceWorker" in navigator) {
+				navigator.serviceWorker.ready.then((registration) => {
+					registration.pushManager.getSubscription().then((subscription) => {
+						if (subscription) {
+							updateStatus("Already subscribed");
+							document.getElementById("notificationPanel").style.display =
+								"block";
+						}
+					});
+				});
+			}
+		</script>
+	</body>
+</html>
